@@ -568,6 +568,13 @@ impl Instance {
             global_ctx.config.dump()
         );
 
+        // Apply DNS configuration before any connectors or tunnels are started so that the
+        // lazy-initialized resolvers pick up the correct setting.
+        crate::common::dns::USE_BUILTIN_DNS.store(
+            global_ctx.config.get_flags().enable_builtin_dns,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
         let (peer_packet_sender, peer_packet_receiver) = create_packet_recv_chan();
 
         let id = global_ctx.get_id();

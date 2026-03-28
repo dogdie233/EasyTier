@@ -29,6 +29,11 @@ pub fn get_default_resolver_config() -> ResolverConfig {
 
 pub static ALLOW_USE_SYSTEM_DNS_RESOLVER: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
 
+/// When false, the built-in DNS servers (223.5.5.5 / 180.184.1.1) are not used and only the
+/// system DNS resolver is consulted.  Defaults to true for backwards compatibility.
+pub static USE_BUILTIN_DNS: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
+
+/// Resolver that includes the built-in DNS servers plus any system-configured servers.
 pub static RESOLVER: Lazy<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>> =
     Lazy::new(|| {
         let system_cfg = read_system_conf();
@@ -46,8 +51,30 @@ pub static RESOLVER: Lazy<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>>
         Arc::new(builder.build())
     });
 
+/// Resolver that uses only the system-configured DNS servers (no built-in servers).
+pub static SYSTEM_ONLY_RESOLVER: Lazy<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>> =
+    Lazy::new(|| {
+        let system_cfg = read_system_conf();
+        let mut cfg = ResolverConfig::new();
+        let mut opt = ResolverOpts::default();
+        if let Ok(s) = system_cfg {
+            for ns in s.0.name_servers() {
+                cfg.add_name_server(ns.clone());
+            }
+            opt = s.1;
+        }
+        opt.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+        let builder = TokioResolver::builder_with_config(cfg, TokioConnectionProvider::default())
+            .with_options(opt);
+        Arc::new(builder.build())
+    });
+
 pub async fn resolve_txt_record(domain_name: &str) -> Result<String, Error> {
-    let r = RESOLVER.clone();
+    let r = if USE_BUILTIN_DNS.load(std::sync::atomic::Ordering::Relaxed) {
+        RESOLVER.clone()
+    } else {
+        SYSTEM_ONLY_RESOLVER.clone()
+    };
     let response = r
         .txt_lookup(domain_name)
         .await
@@ -104,6 +131,15 @@ pub async fn socket_addrs(
                 tracing::error!(?e, "system dns lookup failed");
             }
         }
+    }
+
+    if !USE_BUILTIN_DNS.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(anyhow::anyhow!(
+            "DNS resolution failed: system resolver returned no results and built-in DNS is disabled, host: {}, port: {}",
+            host,
+            port
+        )
+        .into());
     }
 
     // use hickory_resolver
