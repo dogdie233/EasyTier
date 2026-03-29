@@ -73,6 +73,9 @@ message FlagsInConfig {
 
   bool lazy_p2p = 37;
   bool need_p2p = 38;
+
+  // use built-in DNS servers (223.5.5.5, 180.184.1.1) for resolution; if false, only system DNS is used
+  bool enable_builtin_dns = 39;
 }
 
 message RpcDescriptor {
